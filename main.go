@@ -221,7 +221,7 @@ func main() {
 			Name:   "build.status",
 			Usage:  "build status",
 			Value:  "success",
-			EnvVar: "DRONE_BUILD_STATUS,CI_PIPELINE_STATUS",
+			EnvVar: "PLUGIN_STATUS,DRONE_BUILD_STATUS,CI_PIPELINE_STATUS",
 		},
 		cli.StringFlag{
 			Name:   "build.link",
