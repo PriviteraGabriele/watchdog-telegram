@@ -65,6 +65,11 @@ func main() {
 			EnvVar: "PLUGIN_MESSAGE_FIXED",
 		},
 		cli.StringFlag{
+			Name:   "message.body",
+			Usage:  "shared message body appended to message_success/failure/fixed",
+			EnvVar: "PLUGIN_MESSAGE_BODY",
+		},
+		cli.StringFlag{
 			Name:   "template.vars",
 			Usage:  "additional template vars to be used in message, as JSON string",
 			EnvVar: "PLUGIN_TEMPLATE_VARS,TELEGRAM_TEMPLATE_VARS,INPUT_TEMPLATE_VARS",
@@ -346,6 +351,7 @@ func run(c *cli.Context) error {
 			MessageSuccess:        c.String("message.success"),
 			MessageFailure:        c.String("message.failure"),
 			MessageFixed:          c.String("message.fixed"),
+			MessageBody:           c.String("message.body"),
 			TemplateVars:          c.String("template.vars"),
 			TemplateVarsFile:      c.String("template.vars.file"),
 			Photo:                 c.StringSlice("photo"),
