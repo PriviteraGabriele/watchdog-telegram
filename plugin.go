@@ -81,7 +81,6 @@ type (
 		To                    []string
 		Message               string
 		MessageFile           string
-		MessageBody           string
 		MessageSuccess        string
 		MessageFailure        string
 		MessageFixed          string
@@ -341,10 +340,6 @@ func (p *Plugin) Exec() (err error) {
 	default:
 		p.Config.Format = formatHTML
 		message = p.Message()
-	}
-
-	if p.Config.MessageBody != "" && len(message) > 0 {
-		message[0] = message[0] + "\n" + p.Config.MessageBody
 	}
 
 	if p.Config.TemplateVars != "" {
