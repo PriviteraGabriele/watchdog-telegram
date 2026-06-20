@@ -285,13 +285,19 @@ func parseButtons(s string) ([]Button, error) {
 	return buttons, nil
 }
 
-func buildInlineKeyboard(buttons []Button) tgbotapi.InlineKeyboardMarkup {
+func buildInlineKeyboard(buttons []Button) (tgbotapi.InlineKeyboardMarkup, bool) {
 	row := make([]tgbotapi.InlineKeyboardButton, 0, len(buttons))
 	for _, b := range buttons {
+		if b.Text == "" || b.URL == "" {
+			continue
+		}
 		btn := tgbotapi.NewInlineKeyboardButtonURL(b.Text, b.URL)
 		row = append(row, btn)
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(row)
+	if len(row) == 0 {
+		return tgbotapi.InlineKeyboardMarkup{}, false
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(row), true
 }
 
 func formatDuration(started, finished int64) string {
@@ -465,8 +471,9 @@ func (p *Plugin) Exec() (err error) {
 			msg.DisableNotification = disableNotif
 
 			if len(buttons) > 0 {
-				keyboard := buildInlineKeyboard(buttons)
-				msg.ReplyMarkup = keyboard
+				if keyboard, ok := buildInlineKeyboard(buttons); ok {
+					msg.ReplyMarkup = keyboard
+				}
 			}
 
 			if err := p.Send(bot, msg); err != nil {
