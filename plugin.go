@@ -54,41 +54,53 @@ type (
 
 	// Build information.
 	Build struct {
-		Tag      string
-		Event    string
-		Number   int
-		Status   string
-		Link     string
-		Started  int64
-		Finished int64
-		PR       string
-		DeployTo string
+		Tag        string
+		Event      string
+		Number     int
+		Status     string
+		Link       string
+		Started    int64
+		Finished   int64
+		PR         string
+		DeployTo   string
+		PrevStatus string
+		Duration   string
+	}
+
+	// Button represents a single inline keyboard button.
+	Button struct {
+		Text string `json:"text"`
+		URL  string `json:"url"`
 	}
 
 	// Config for the plugin.
 	Config struct {
-		Token            string
-		Debug            bool
-		MatchEmail       bool
-		To               []string
-		Message          string
-		MessageFile      string
-		TemplateVarsFile string
-		TemplateVars     string
-		Photo            []string
-		Document         []string
-		Sticker          []string
-		Audio            []string
-		Voice            []string
-		Location         []string
-		Video            []string
-		Venue            []string
-		Format           string
-		GitHub           bool
-		Socks5           string
-
+		Token                 string
+		Debug                 bool
+		MatchEmail            bool
+		To                    []string
+		Message               string
+		MessageFile           string
+		MessageSuccess        string
+		MessageFailure        string
+		MessageFixed          string
+		TemplateVarsFile      string
+		TemplateVars          string
+		Photo                 []string
+		Document              []string
+		Sticker               []string
+		Audio                 []string
+		Voice                 []string
+		Location              []string
+		Video                 []string
+		Venue                 []string
+		Format                string
+		GitHub                bool
+		Socks5                string
+		Buttons               string
 		DisableWebPagePreview bool
 		DisableNotification   bool
+		DisableNotifOnSuccess bool
 	}
 
 	// Plugin values.
@@ -154,6 +166,12 @@ func escapeMarkdownOne(str string) string {
 func escapeMarkdownFields(fields ...*string) {
 	for _, f := range fields {
 		*f = escapeMarkdownOne(*f)
+	}
+}
+
+func escapeHTMLFields(fields ...*string) {
+	for _, f := range fields {
+		*f = html.EscapeString(*f)
 	}
 }
 
@@ -256,11 +274,47 @@ func parseTo(to []string, authorEmail string, matchEmail bool) []int64 {
 	return ids
 }
 
+func parseButtons(s string) ([]Button, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var buttons []Button
+	if err := json.Unmarshal([]byte(s), &buttons); err != nil {
+		return nil, fmt.Errorf("invalid buttons JSON: %w", err)
+	}
+	return buttons, nil
+}
+
+func buildInlineKeyboard(buttons []Button) tgbotapi.InlineKeyboardMarkup {
+	row := make([]tgbotapi.InlineKeyboardButton, 0, len(buttons))
+	for _, b := range buttons {
+		btn := tgbotapi.NewInlineKeyboardButtonURL(b.Text, b.URL)
+		row = append(row, btn)
+	}
+	return tgbotapi.NewInlineKeyboardMarkup(row)
+}
+
+func formatDuration(started, finished int64) string {
+	if started == 0 || finished == 0 {
+		return ""
+	}
+	secs := finished - started
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	return fmt.Sprintf("%dm %ds", secs/60, secs%60)
+}
+
 // Exec executes the plugin.
 func (p *Plugin) Exec() (err error) {
 	if len(p.Config.Token) == 0 || len(p.Config.To) == 0 {
 		return errors.New("missing telegram token or user list")
 	}
+
+	p.Build.Duration = formatDuration(p.Build.Started, p.Build.Finished)
+
+	isFixed := strings.ToLower(p.Build.PrevStatus) == "failure" &&
+		strings.ToLower(p.Build.Status) == "success"
 
 	var message []string
 	switch {
@@ -269,10 +323,16 @@ func (p *Plugin) Exec() (err error) {
 		if err != nil {
 			return fmt.Errorf("error loading message file '%s': %w", p.Config.MessageFile, err)
 		}
+	case isFixed && len(p.Config.MessageFixed) > 0:
+		message = []string{p.Config.MessageFixed}
+	case strings.ToLower(p.Build.Status) == "failure" && len(p.Config.MessageFailure) > 0:
+		message = []string{p.Config.MessageFailure}
+	case strings.ToLower(p.Build.Status) == "success" && len(p.Config.MessageSuccess) > 0:
+		message = []string{p.Config.MessageSuccess}
 	case len(p.Config.Message) > 0:
 		message = []string{p.Config.Message}
 	default:
-		p.Config.Format = formatMarkdown
+		p.Config.Format = formatHTML
 		message = p.Message()
 	}
 
@@ -304,7 +364,6 @@ func (p *Plugin) Exec() (err error) {
 				err,
 			)
 		}
-		// File variables take precedence over inline variables
 		if p.Tpl == nil {
 			p.Tpl = vars
 		} else {
@@ -331,6 +390,22 @@ func (p *Plugin) Exec() (err error) {
 
 	bot.Debug = p.Config.Debug
 
+	if p.Config.Format == formatMarkdown {
+		message = escapeMarkdown(message)
+		escapeMarkdownFields(
+			&p.Commit.Message, &p.Commit.Branch, &p.Commit.Link,
+			&p.Commit.Author, &p.Commit.Email,
+			&p.Build.Tag, &p.Build.Link, &p.Build.PR,
+			&p.Repo.Namespace, &p.Repo.Name,
+		)
+	} else if p.Config.Format == formatHTML {
+		escapeHTMLFields(
+			&p.Commit.Message, &p.Commit.Branch,
+			&p.Commit.Author, &p.Commit.Email,
+			&p.Repo.FullName, &p.Repo.Name, &p.Repo.Namespace,
+		)
+	}
+
 	ids := parseTo(p.Config.To, p.Commit.Email, p.Config.MatchEmail)
 	photos := globList(p.Config.Photo)
 	documents := globList(p.Config.Document)
@@ -343,28 +418,19 @@ func (p *Plugin) Exec() (err error) {
 
 	message = trimElement(message)
 
-	if p.Config.Format == formatMarkdown {
-		message = escapeMarkdown(message)
-
-		escapeMarkdownFields(
-			&p.Commit.Message, &p.Commit.Branch, &p.Commit.Link,
-			&p.Commit.Author, &p.Commit.Email,
-			&p.Build.Tag, &p.Build.Link, &p.Build.PR,
-			&p.Repo.Namespace, &p.Repo.Name,
-		)
-	}
-
-	// pre-render message templates (identical for all users)
 	var renderedMessages []string
 	for _, value := range message {
 		txt, err := template.RenderTrim(value, p)
 		if err != nil {
 			return err
 		}
-		renderedMessages = append(renderedMessages, html.UnescapeString(txt))
+		if p.Config.Format == formatHTML {
+			renderedMessages = append(renderedMessages, txt)
+		} else {
+			renderedMessages = append(renderedMessages, html.UnescapeString(txt))
+		}
 	}
 
-	// pre-parse locations and venues (identical for all users)
 	var parsedLocations []Location
 	for _, value := range locations {
 		loc, empty := convertLocation(value)
@@ -381,12 +447,28 @@ func (p *Plugin) Exec() (err error) {
 		}
 	}
 
+	buttons, err := parseButtons(p.Config.Buttons)
+	if err != nil {
+		return err
+	}
+
 	for _, user := range ids {
 		for _, txt := range renderedMessages {
 			msg := tgbotapi.NewMessage(user, txt)
 			msg.ParseMode = p.Config.Format
 			msg.DisableWebPagePreview = p.Config.DisableWebPagePreview
-			msg.DisableNotification = p.Config.DisableNotification
+
+			disableNotif := p.Config.DisableNotification
+			if p.Config.DisableNotifOnSuccess && strings.ToLower(p.Build.Status) == "success" && !isFixed {
+				disableNotif = true
+			}
+			msg.DisableNotification = disableNotif
+
+			if len(buttons) > 0 {
+				keyboard := buildInlineKeyboard(buttons)
+				msg.ReplyMarkup = keyboard
+			}
+
 			if err := p.Send(bot, msg); err != nil {
 				return err
 			}
@@ -490,18 +572,18 @@ func (p *Plugin) Message() []string {
 		)}
 	}
 
-	// ✅  Build #106 of drone-telegram succeeded.
-	//
-	// 📝 Commit by appleboy on master:
-	//  chore: update default template
-	//
-	// 🌐 https://cloud.drone.io/appleboy/drone-telegram/106
+	duration := ""
+	if p.Build.Duration != "" {
+		duration = fmt.Sprintf(" · ⏱ %s", p.Build.Duration)
+	}
+
 	return []string{
-		fmt.Sprintf("%s Build #%d of `%s` %s.\n\n📝 Commit by %s on `%s`:\n``` %s ```\n\n🌐 %s",
+		fmt.Sprintf("%s <b>Build #%d</b> of <code>%s</code> %s%s.\n\n📝 <b>%s</b> on <code>%s</code>:\n<pre>%s</pre>\n\n🌐 %s",
 			icon,
 			p.Build.Number,
 			p.Repo.FullName,
 			p.Build.Status,
+			duration,
 			p.Commit.Author,
 			p.Commit.Branch,
 			p.Commit.Message,

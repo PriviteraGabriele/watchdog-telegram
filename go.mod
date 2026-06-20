@@ -1,4 +1,4 @@
-module github.com/appleboy/drone-telegram
+module github.com/thecorps/watchdog-telegram
 
 go 1.25.10
 

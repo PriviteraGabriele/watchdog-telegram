@@ -1,4 +1,4 @@
-EXECUTABLE := drone-telegram
+EXECUTABLE := watchdog-telegram
 GOFMT ?= gofumpt -l
 DIST := dist
 DIST_DIRS := $(DIST)/binaries $(DIST)/release
